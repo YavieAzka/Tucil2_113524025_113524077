@@ -53,11 +53,13 @@ class OctreeNode {
 class Octree {
     private:
         OctreeNode* root;
+        
     public:
-        int maxDepth;
         vector <Point> vertex;
+        int maxDepth;
+        vector <int> nodeCountPerDepth;
         vector <int> face;
-
+        vector <int> prunedNodes;
         Octree() : root(nullptr), maxDepth(0) {}
 
         ~Octree() {

@@ -25,9 +25,9 @@ void parseFile(const string& path, Octree& octree) {
         } else if (token == "f") {
             int v1, v2, v3;
             ss >> v1 >> v2 >> v3;
-            octree.face.push_back(v1);
-            octree.face.push_back(v2);
-            octree.face.push_back(v3);
+            octree.face.push_back(v1 - 1);
+            octree.face.push_back(v2 - 1);
+            octree.face.push_back(v3 - 1);
         }
 
        
@@ -72,6 +72,13 @@ int main(int argc, char* argv[]) {
 
     Octree octree;
     octree.maxDepth = maxDepth;
+    for(int i = 0; i <= maxDepth; i++) {
+        octree.nodeCountPerDepth.push_back(0);
+    }
+    for(int i = 0; i <= maxDepth; i++) {
+        octree.prunedNodes.push_back(0);
+    }
+    //octree.nodeCountPerDepth[maxDepth] = 1; // Root node dihitung sebagai 1 pada kedalaman maksimum
     
     // Parse object file
     parseFile(objFilePath, octree);
@@ -83,7 +90,26 @@ int main(int argc, char* argv[]) {
 
     auto end = chrono::high_resolution_clock::now();
     auto duration = chrono::duration_cast<chrono::milliseconds>(end - start);
-    std::cout << "Waktu eksekusi: " << duration.count() << " ms\n";
+    cout << "Waktu eksekusi: " << duration.count() << " ms\n";
 
+    cout << "STATISTIK:\n";
+    cout << "Banyaknya voxel yang terbentuk : " << octree.nodeCountPerDepth[maxDepth] << "\n";
+    cout << "Banyaknya vertex yang terbentuk: " << octree.nodeCountPerDepth[maxDepth] * 8 << "\n";
+    cout << "Banyaknya faces yang terbentuk : " << octree.nodeCountPerDepth[maxDepth] * 12 << "\n";
+    
+    cout << "Node octree yang terbentuk: \n";
+    for(int i = 1; i <= octree.maxDepth; i++) {
+        cout << i << " : " << octree.nodeCountPerDepth[i] << "\n";
+    }
+    
+    cout << "Node yang tidak perlu ditelusuri:\n";
+    for(int i = 1; i <= octree.maxDepth; i++) {
+        cout << i << " : " << octree.prunedNodes[i] << "\n";
+    }
+
+    cout << "Kedalaman octree: " << octree.maxDepth << "\n";
+    cout << "Waktu perhitungan: " << duration.count() << " ms\n";
+    cout << "Path hasil .obj disimpan: " << outputPath << "\n";
+    
     return 0;
 }

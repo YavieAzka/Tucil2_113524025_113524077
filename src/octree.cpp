@@ -103,8 +103,6 @@ void Octree::voxelize(OctreeNode* node, int depth, bool optimized) {
         {  node->getSize() / 4,  node->getSize() / 4,  node->getSize() / 4 }  // Octant 7
     };
 
-    bool anyChild = false;
-
     #pragma omp parallel for if(depth >= maxDepth - 2 && optimized)
     for(int i = 0; i < 8; i++) {
         node->children[i] = new OctreeNode();
@@ -120,21 +118,30 @@ void Octree::voxelize(OctreeNode* node, int depth, bool optimized) {
                 Point v1 = this->vertex[this->face[idx * 3 + 1]];
                 Point v2 = this->vertex[this->face[idx * 3 + 2]];
 
-                if (triangleIntersects(v0, v1, v2, newCenter, Point{node->getSize() / 2, node->getSize() / 2, node->getSize() / 2})) {
+                if (triangleIntersects(v0, v1, v2, newCenter, Point{node->getSize() / 4, node->getSize() / 4, node->getSize() / 4})) {
                     node->children[i]->faceIndices.push_back(idx);
                     intersects = true;
                 }
             }
             if(intersects) {
-                anyChild = true;
+                #pragma omp atomic
+                nodeCountPerDepth[this->maxDepth - depth + 1]++;
                 voxelize(node->children[i], depth - 1, optimized);
             } else {
                 delete node->children[i];
                 node->children[i] = nullptr;
+                #pragma omp atomic
+                prunedNodes[this->maxDepth - depth + 1]++;
             }
     }
 
-    
+    bool anyChild = false;
+    for (int i = 0; i < 8; i++) {
+        if (node->children[i] != nullptr) {
+            anyChild = true;
+            break;
+        }
+    }
 
     // After creating children, this node is no longer a leaf
     if(anyChild){

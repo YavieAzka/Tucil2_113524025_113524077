@@ -1,0 +1,50 @@
+// Fungsi Divide and Conquer Rekursif
+FUNCTION Voxelize(node, depth)
+    // BASE CASE: Jika kedalaman sudah mencapai 0
+    IF depth == 0 THEN
+        node.isLeaf = TRUE
+        node.isVoxel = TRUE
+        RETURN
+    END IF
+
+    // DIVIDE: Tentukan titik pusat untuk 8 sub-oktan (anak kubus)
+    offsets = Array of 8 arah kuadran ruang 3D (x, y, z)
+    anyChildCreated = FALSE
+
+    FOR i = 0 TO 7:
+        // Hitung parameter anak
+        childSize = node.size / 2
+        childCenter = node.center + offsets[i] * (node.size / 4)
+        
+        childNode = NEW OctreeNode(childCenter, childSize)
+        intersects = FALSE
+
+        // CONQUER: Cek persinggungan antara sub-oktan dan segitiga
+        FOR EACH faceIdx IN node.faceIndices:
+            segitiga = AmbilSegitiga(faceIdx)
+            
+            // Menggunakan Separating Axis Theorem (SAT)
+            IF TriangleIntersectsCube(segitiga, childCenter, childSize/2) THEN
+                childNode.faceIndices.APPEND(faceIdx)
+                intersects = TRUE
+            END IF
+        END FOR
+
+        // COMBINE & PRUNING
+        IF intersects == TRUE THEN
+            // Jika memotong permukaan, simpan anak dan lanjutkan rekursi
+            node.children[i] = childNode
+            Voxelize(childNode, depth - 1)
+            anyChildCreated = TRUE
+        ELSE
+            // PRUNING: Jika ruang kosong (tidak memotong objek), hapus anak
+            DELETE childNode
+            node.children[i] = NULL
+        END IF
+    END FOR
+
+    // Tandai status node induk
+    IF anyChildCreated == TRUE THEN
+        node.isLeaf = FALSE
+    END IF
+END FUNCTION

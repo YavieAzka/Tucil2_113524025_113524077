@@ -43,7 +43,7 @@ bool parseFile(const string& path, Octree& octree) {
             vector<string> faceTokens;
             string fToken;
             
-            /
+            
             while (ss >> fToken) {
                 faceTokens.push_back(fToken);
             }

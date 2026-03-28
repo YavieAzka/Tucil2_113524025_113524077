@@ -1,0 +1,23 @@
+// Fungsi Inisialisasi: Membuat Bounding Box Utama
+FUNCTION BuildOctree(vertices, faces, maxDepth)
+    // 1. Cari nilai minimum dan maksimum dari seluruh verteks
+    minX, minY, minZ = INFINITY
+    maxX, maxY, maxZ = -INFINITY
+    
+    FOR EACH v IN vertices:
+        minX = MIN(minX, v.x); maxX = MAX(maxX, v.x)
+        minY = MIN(minY, v.y); maxY = MAX(maxY, v.y)
+        minZ = MIN(minZ, v.z); maxZ = MAX(maxZ, v.z)
+    END FOR
+
+    // 2. Hitung titik pusat dan ukuran kubus terbesar (Root)
+    center = Point((minX + maxX)/2, (minY + maxY)/2, (minZ + maxZ)/2)
+    size = MAX(maxX - minX, maxY - minY, maxZ - minZ)
+
+    // 3. Buat simpul akar (Root Node)
+    root = NEW OctreeNode(center, size)
+    root.faceIndices = faces // Masukkan semua indeks segitiga ke root
+
+    // 4. Panggil fungsi rekursif Divide and Conquer
+    Voxelize(root, maxDepth)
+END FUNCTION

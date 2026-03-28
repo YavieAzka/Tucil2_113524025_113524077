@@ -1,246 +1,235 @@
 #include "octree.hpp"
+#include <fstream>
+#include <cmath>
+#include <algorithm>
+#include <iostream>
+#include <limits>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+using namespace std;
 
 void Octree::showVertex() const {
-    cout << "Vertices:\n";
-    for (size_t i = 0; i < vertex.size(); i++) {
-        cout << "Vertex " << i << ": (" << vertex[i].x << ", " << vertex[i].y << ", " << vertex[i].z << ")\n";
-    }
+    for (const auto& p : vertex)
+        cout << "v " << p.x << " " << p.y << " " << p.z << "\n";
 }
 
 void Octree::showFaces() const {
-    cout << "Faces:\n";
-    for (size_t i = 0; i < face.size(); i += 3) {
-        cout << "Face " << i/3 << ": (" << face[i] << ", " << face[i+1] << ", " << face[i+2] << ")\n";
-    }
+    for (int i = 0; i < (int)face.size(); i += 3)
+        cout << "f " << face[i]+1 << " " << face[i+1]+1 << " " << face[i+2]+1 << "\n";
 }
 
-float dotProduct(const Point& a, const Point& b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
+static bool triangleAABBIntersect(
+    float tx0, float ty0, float tz0,
+    float tx1, float ty1, float tz1,
+    float tx2, float ty2, float tz2,
+    float h)
+{
+    // ---- 3 AABB face-normal axes (x, y, z) ----
+    if (min({tx0,tx1,tx2}) >  h || max({tx0,tx1,tx2}) < -h) return false;
+    if (min({ty0,ty1,ty2}) >  h || max({ty0,ty1,ty2}) < -h) return false;
+    if (min({tz0,tz1,tz2}) >  h || max({tz0,tz1,tz2}) < -h) return false;
 
-Point crossProduct(const Point& a, const Point& b) {
-    return Point{
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x
+    // ---- Triangle edge vectors ----
+    float e0x = tx1-tx0, e0y = ty1-ty0, e0z = tz1-tz0;
+    float e1x = tx2-tx1, e1y = ty2-ty1, e1z = tz2-tz1;
+    float e2x = tx0-tx2, e2y = ty0-ty2, e2z = tz0-tz2;
+
+    // ---- Triangle normal axis ----
+    float nx = e0y*e1z - e0z*e1y;
+    float ny = e0z*e1x - e0x*e1z;
+    float nz = e0x*e1y - e0y*e1x;
+    float d  = nx*tx0 + ny*ty0 + nz*tz0;
+    float r  = h * (fabs(nx) + fabs(ny) + fabs(nz));
+    if (fabs(d) > r) return false;
+
+    auto test = [&](float ax, float ay, float az) -> bool {
+        float p0  = ax*tx0 + ay*ty0 + az*tz0;
+        float p1  = ax*tx1 + ay*ty1 + az*tz1;
+        float p2  = ax*tx2 + ay*ty2 + az*tz2;
+        float rad = h * (fabs(ax) + fabs(ay) + fabs(az));
+        return min({p0,p1,p2}) <= rad && max({p0,p1,p2}) >= -rad;
     };
+
+    if (!test(   0,  e0z, -e0y)) return false;
+    if (!test(-e0z,    0,  e0x)) return false;
+    if (!test( e0y, -e0x,    0)) return false;
+    if (!test(   0,  e1z, -e1y)) return false;
+    if (!test(-e1z,    0,  e1x)) return false;
+    if (!test( e1y, -e1x,    0)) return false;
+    if (!test(   0,  e2z, -e2y)) return false;
+    if (!test(-e2z,    0,  e2x)) return false;
+    if (!test( e2y, -e2x,    0)) return false;
+
+    return true;   
 }
-
-// Returns true if projections of triangle and cube overlap on the given axis
-bool overlapOnAxis(Point v0, Point v1, Point v2,
-                   Point halfSize, Point axis) {
-    // project triangle vertices onto the axis
-    float p0 = dotProduct(v0, axis);
-    float p1 = dotProduct(v1, axis);
-    float p2 = dotProduct(v2, axis);
-
-    // projects radius of the cube onto the axis
-    float r = halfSize.x * fabs(axis.x)
-            + halfSize.y * fabs(axis.y)
-            + halfSize.z * fabs(axis.z);
-
-    float triMin = min({p0, p1, p2});
-    float triMax = max({p0, p1, p2});
-
-    // overlap: if triMin <= r and triMax >= -r
-    return !(triMin > r || triMax < -r);
-}
-
-// center = pusat kubus, halfSize = setengah panjang sisi
-bool triangleIntersects(Point v0, Point v1, Point v2,
-                             Point center, Point halfSize) {
-    // translate triangle to cube's local space
-    v0 = {v0.x - center.x, v0.y - center.y, v0.z - center.z};
-    v1 = {v1.x - center.x, v1.y - center.y, v1.z - center.z};
-    v2 = {v2.x - center.x, v2.y - center.y, v2.z - center.z};
-
-    // triangle edges
-    Point e0 = {v1.x-v0.x, v1.y-v0.y, v1.z-v0.z};
-    Point e1 = {v2.x-v1.x, v2.y-v1.y, v2.z-v1.z};
-    Point e2 = {v0.x-v2.x, v0.y-v2.y, v0.z-v2.z};
-
-    Point axisX = {1,0,0}, axisY = {0,1,0}, axisZ = {0,0,1};
-
-    // 9 axes cross produt
-    Point axes9[9] = {
-        crossProduct(e0, axisX), crossProduct(e0, axisY), crossProduct(e0, axisZ),
-        crossProduct(e1, axisX), crossProduct(e1, axisY), crossProduct(e1, axisZ),
-        crossProduct(e2, axisX), crossProduct(e2, axisY), crossProduct(e2, axisZ),
-    };
-    for (auto& ax : axes9)
-        if (!overlapOnAxis(v0, v1, v2, halfSize, ax)) return false;
-
-    // 3 main axes 
-    if (!overlapOnAxis(v0, v1, v2, halfSize, axisX)) return false;
-    if (!overlapOnAxis(v0, v1, v2, halfSize, axisY)) return false;
-    if (!overlapOnAxis(v0, v1, v2, halfSize, axisZ)) return false;
-
-    // triangle's normal
-    Point normal = crossProduct(e0, e1);
-    if (!overlapOnAxis(v0, v1, v2, halfSize, normal)) return false;
-
-    return true;
-}
-
 
 void Octree::voxelize(OctreeNode* node, int depth, bool optimized) {
-    if (depth == 0) {
-        node->isLeaf = true;
-        node->isVoxel = true; 
-        return;
-    }
+    Point  center = node->getCenter();
+    float  size   = node->getSize();
+    float  half   = size * 0.5f;
 
-    Point center = node->getCenter();
-    Point offsets[8] = {
-        { -node->getSize() / 4, -node->getSize() / 4, -node->getSize() / 4 }, // Octant 0   
-        {  node->getSize() / 4, -node->getSize() / 4, -node->getSize() / 4 }, // Octant 1
-        { -node->getSize() / 4,  node->getSize() / 4, -node->getSize() / 4 }, // Octant 2
-        {  node->getSize() / 4,  node->getSize() / 4, -node->getSize() / 4 }, // Octant 3
-        { -node->getSize() / 4, -node->getSize() / 4,  node->getSize() / 4 }, // Octant 4
-        {  node->getSize() / 4, -node->getSize() / 4,  node->getSize() / 4 }, // Octant 5
-        { -node->getSize() / 4,  node->getSize() / 4,  node->getSize() / 4 }, // Octant 6
-        {  node->getSize() / 4,  node->getSize() / 4,  node->getSize() / 4 }  // Octant 7
-    };
+    vector<int> hitting;
+    hitting.reserve(node->faceIndices.size());
 
-    #pragma omp parallel for if(depth >= maxDepth - 2 && optimized)
-    for(int i = 0; i < 8; i++) {
-        node->children[i] = new OctreeNode();
-            node->children[i]->setSize(node->getSize() / 2);
-            Point newCenter = { center.x + offsets[i].x, center.y + offsets[i].y, center.z + offsets[i].z };
-            node->children[i]->setCenter(newCenter);
+    for (int idx : node->faceIndices) {
+        int base = idx * 3;
+        const Point& v0 = vertex[face[base]];
+        const Point& v1 = vertex[face[base+1]];
+        const Point& v2 = vertex[face[base+2]];
 
-
-            // Check if any triangle intersects with this child
-            bool intersects = false; 
-            for (int idx : node->faceIndices) {
-                Point v0 = this->vertex[this->face[idx * 3]];
-                Point v1 = this->vertex[this->face[idx * 3 + 1]];
-                Point v2 = this->vertex[this->face[idx * 3 + 2]];
-
-                if (triangleIntersects(v0, v1, v2, newCenter, Point{node->getSize() / 4, node->getSize() / 4, node->getSize() / 4})) {
-                    node->children[i]->faceIndices.push_back(idx);
-                    intersects = true;
-                }
-            }
-            if(intersects) {
-                #pragma omp atomic
-                nodeCountPerDepth[this->maxDepth - depth + 1]++;
-                voxelize(node->children[i], depth - 1, optimized);
-            } else {
-                delete node->children[i];
-                node->children[i] = nullptr;
-                #pragma omp atomic
-                prunedNodes[this->maxDepth - depth + 1]++;
-            }
-    }
-
-    bool anyChild = false;
-    for (int i = 0; i < 8; i++) {
-        if (node->children[i] != nullptr) {
-            anyChild = true;
-            break;
+        if (triangleAABBIntersect(
+                v0.x - center.x, v0.y - center.y, v0.z - center.z,
+                v1.x - center.x, v1.y - center.y, v1.z - center.z,
+                v2.x - center.x, v2.y - center.y, v2.z - center.z,
+                half))
+        {
+            hitting.push_back(idx);
         }
     }
 
-    // After creating children, this node is no longer a leaf
-    if(anyChild){
-        node->isLeaf = false;
+    { vector<int>().swap(node->faceIndices); }
+
+    if (hitting.empty()) {
+        if (depth > 0) {
+#pragma omp atomic
+            prunedNodes[depth]++;
+        }
+        return;
     }
-    
+
+    if (depth > 0) {
+#pragma omp atomic
+        nodeCountPerDepth[depth]++;
+    }
+
+    // ------ BASE CASE: leaf voxel ------
+    if (depth == maxDepth) {
+        node->isLeaf  = true;
+        node->isVoxel = true;
+        return;
+    }
+
+    // ------ DIVIDE: create 8 child octants ------
+    node->isLeaf = false;
+    float childSize = size * 0.5f;
+    float off       = childSize * 0.5f;
+
+    int ci = 0;
+    for (int dz = -1; dz <= 1; dz += 2)
+        for (int dy = -1; dy <= 1; dy += 2)
+            for (int dx = -1; dx <= 1; dx += 2) {
+                OctreeNode* child = new OctreeNode();
+                Point cc = { center.x + dx*off,
+                             center.y + dy*off,
+                             center.z + dz*off };
+                child->setCenter(cc);
+                child->setSize(childSize);
+                child->faceIndices = hitting;  
+                node->children[ci++] = child;
+            }
+
+    if (optimized && depth == 0) {
+#pragma omp parallel for schedule(dynamic)
+        for (int i = 0; i < 8; i++)
+            voxelize(node->children[i], depth + 1, optimized);
+    } else {
+        for (int i = 0; i < 8; i++)
+            voxelize(node->children[i], depth + 1, optimized);
+    }
 }
 
 void Octree::buildOctree(bool optimized) {
-    float minX, minY, minZ, maxX, maxY, maxZ;
-    minX = minY = minZ = std::numeric_limits<float>::max();
-    maxX = maxY = maxZ = std::numeric_limits<float>::lowest();
-    for(const auto& v : vertex) {
-        minX = min(minX, v.x);
-        minY = min(minY, v.y);
-        minZ = min(minZ, v.z);
-        maxX = max(maxX, v.x);
-        maxY = max(maxY, v.y);
-        maxZ = max(maxZ, v.z);
+    if (vertex.empty() || face.empty()) return;
+
+    // ---- Compute axis-aligned bounding box ----
+    float minX = vertex[0].x, maxX = vertex[0].x;
+    float minY = vertex[0].y, maxY = vertex[0].y;
+    float minZ = vertex[0].z, maxZ = vertex[0].z;
+
+    for (const auto& p : vertex) {
+        minX = min(minX, p.x);  maxX = max(maxX, p.x);
+        minY = min(minY, p.y);  maxY = max(maxY, p.y);
+        minZ = min(minZ, p.z);  maxZ = max(maxZ, p.z);
     }
 
-    Point center;
-    center.x = (minX + maxX) / 2;
-    center.y = (minY + maxY) / 2;
-    center.z = (minZ + maxZ) / 2;
+    float cx   = (minX + maxX) * 0.5f;
+    float cy   = (minY + maxY) * 0.5f;
+    float cz   = (minZ + maxZ) * 0.5f;
+    float span = max({ maxX-minX, maxY-minY, maxZ-minZ });
+    float size = span * 1.001f;  
 
-    float size = max({maxX - minX, maxY - minY, maxZ - minZ});
+    // ---- Build root ----
+    root = new OctreeNode();
+    root->setCenter({cx, cy, cz});
+    root->setSize(size);
 
-    this->root = new OctreeNode();
-    this->root->setCenter(center);
-    this->root->setSize(size);
+    int numFaces = (int)face.size() / 3;
+    root->faceIndices.resize(numFaces);
+    for (int i = 0; i < numFaces; i++) root->faceIndices[i] = i;
 
-    int faceCount = face.size() / 3;
-    for (int i = 0; i < faceCount; i++) {
-        root->faceIndices.push_back(i);
+    voxelize(root, 0, optimized);
+}
+
+void Octree::collectVoxels(OctreeNode* node, ofstream& file, int& offset) {
+    if (!node) return;
+
+    if (node->isLeaf && node->isVoxel) {
+        Point c = node->getCenter();
+        float h = node->getSize() * 0.5f;
+
+        // ---- 8 vertices ----
+        file << "v " << (c.x-h) << " " << (c.y-h) << " " << (c.z-h) << "\n"; // 1
+        file << "v " << (c.x+h) << " " << (c.y-h) << " " << (c.z-h) << "\n"; // 2
+        file << "v " << (c.x+h) << " " << (c.y+h) << " " << (c.z-h) << "\n"; // 3
+        file << "v " << (c.x-h) << " " << (c.y+h) << " " << (c.z-h) << "\n"; // 4
+        file << "v " << (c.x-h) << " " << (c.y-h) << " " << (c.z+h) << "\n"; // 5
+        file << "v " << (c.x+h) << " " << (c.y-h) << " " << (c.z+h) << "\n"; // 6
+        file << "v " << (c.x+h) << " " << (c.y+h) << " " << (c.z+h) << "\n"; // 7
+        file << "v " << (c.x-h) << " " << (c.y+h) << " " << (c.z+h) << "\n"; // 8
+
+        int b = offset;   // 1-based start index
+
+        // ---- 12 triangular faces (outward CCW normals) ----
+        // Front  (z−): normal (0,0,−1)
+        file << "f " << b+0 << " " << b+3 << " " << b+2 << "\n";
+        file << "f " << b+0 << " " << b+2 << " " << b+1 << "\n";
+        // Back   (z+): normal (0,0,+1)
+        file << "f " << b+4 << " " << b+5 << " " << b+6 << "\n";
+        file << "f " << b+4 << " " << b+6 << " " << b+7 << "\n";
+        // Left   (x−): normal (−1,0,0)
+        file << "f " << b+0 << " " << b+4 << " " << b+7 << "\n";
+        file << "f " << b+0 << " " << b+7 << " " << b+3 << "\n";
+        // Right  (x+): normal (+1,0,0)
+        file << "f " << b+1 << " " << b+2 << " " << b+6 << "\n";
+        file << "f " << b+1 << " " << b+6 << " " << b+5 << "\n";
+        // Bottom (y−): normal (0,−1,0)
+        file << "f " << b+0 << " " << b+1 << " " << b+5 << "\n";
+        file << "f " << b+0 << " " << b+5 << " " << b+4 << "\n";
+        // Top    (y+): normal (0,+1,0)
+        file << "f " << b+3 << " " << b+6 << " " << b+2 << "\n";
+        file << "f " << b+3 << " " << b+7 << " " << b+6 << "\n";
+
+        offset += 8;
+        return;
     }
 
-    voxelize(root, maxDepth, optimized);
+    for (int i = 0; i < 8; i++)
+        collectVoxels(node->children[i], file, offset);
 }
 
 void Octree::writeObj(const string& filename) {
     ofstream file(filename);
     if (!file.is_open()) {
-        cout << "Error: tidak bisa membuka file output\n";
+        cerr << "Error: Tidak dapat membuka file output: " << filename << "\n";
         return;
     }
 
-    int vertexOffset = 1; // indeks di .obj dimulai dari 1
-    collectVoxels(root, file, vertexOffset);
+    file << "# Voxelized OBJ — generated by Octree voxelizer\n";
+    file << "# Uniform voxel size at depth " << maxDepth << "\n\n";
 
-    file.close();
-    cout << "Output disimpan di: " << filename << "\n";
-}
-
-void Octree::collectVoxels(OctreeNode* node, ofstream& file, int& offset) {
-    if (node == nullptr) return;
-
-    // Jika ini voxel aktif → tulis kubus
-    if (node->isVoxel) {
-        Point c = node->getCenter();
-        float h = node->getSize() / 2.0f;
-
-        // 8 vertex kubus
-        file << "v " << c.x-h << " " << c.y-h << " " << c.z-h << "\n"; // v0
-        file << "v " << c.x+h << " " << c.y-h << " " << c.z-h << "\n"; // v1
-        file << "v " << c.x+h << " " << c.y+h << " " << c.z-h << "\n"; // v2
-        file << "v " << c.x-h << " " << c.y+h << " " << c.z-h << "\n"; // v3
-        file << "v " << c.x-h << " " << c.y-h << " " << c.z+h << "\n"; // v4
-        file << "v " << c.x+h << " " << c.y-h << " " << c.z+h << "\n"; // v5
-        file << "v " << c.x+h << " " << c.y+h << " " << c.z+h << "\n"; // v6
-        file << "v " << c.x-h << " " << c.y+h << " " << c.z+h << "\n"; // v7
-
-        int b = offset; // base index untuk voxel ini
-
-        // 12 face (6 sisi × 2 segitiga)
-        // Sisi bawah
-        file << "f " << b+0 << " " << b+1 << " " << b+2 << "\n";
-        file << "f " << b+0 << " " << b+2 << " " << b+3 << "\n";
-        // Sisi atas
-        file << "f " << b+4 << " " << b+6 << " " << b+5 << "\n";
-        file << "f " << b+4 << " " << b+7 << " " << b+6 << "\n";
-        // Sisi depan
-        file << "f " << b+0 << " " << b+5 << " " << b+1 << "\n";
-        file << "f " << b+0 << " " << b+4 << " " << b+5 << "\n";
-        // Sisi belakang
-        file << "f " << b+2 << " " << b+7 << " " << b+3 << "\n";
-        file << "f " << b+2 << " " << b+6 << " " << b+7 << "\n";
-        // Sisi kiri
-        file << "f " << b+0 << " " << b+3 << " " << b+7 << "\n";
-        file << "f " << b+0 << " " << b+7 << " " << b+4 << "\n";
-        // Sisi kanan
-        file << "f " << b+1 << " " << b+5 << " " << b+6 << "\n";
-        file << "f " << b+1 << " " << b+6 << " " << b+2 << "\n";
-
-        offset += 8; // geser offset untuk voxel berikutnya
-        return;
-    }
-
-    // Bukan voxel → telusuri anak-anaknya
-    for (int i = 0; i < 8; i++)
-        collectVoxels(node->children[i], file, offset);
+    int offset = 1;   // OBJ indices are 1-based
+    collectVoxels(root, file, offset);
 }

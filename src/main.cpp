@@ -10,28 +10,73 @@ using namespace std;
 
 
 
-void parseFile(const string& path, Octree& octree) {
+bool parseFile(const string& path, Octree& octree) {
     ifstream file(path);
+    if (!file.is_open()) {
+        cerr << "Error: Tidak dapat membuka file " << path << "\n";
+        return false;
+    }
+
     string line;
+    int lineNumber = 0;
+
     while (getline(file, line)) {
+        lineNumber++;
+        
+        // Lewati baris kosong
+        if (line.empty()) continue;
+
         istringstream ss(line);
         string token;
-        ss >> token;  
+        
+        if (!(ss >> token)) continue; 
 
-        if(token == "v") {
+        if (token == "v") {
             Point p;
-            ss >> p.x >> p.y >> p.z;
+            if (!(ss >> p.x >> p.y >> p.z)) {
+                cerr << "Format Invalid di baris " << lineNumber << ": Argumen vertex tidak lengkap.\n";
+                return false;
+            }
             octree.vertex.push_back(p);
+            
         } else if (token == "f") {
-            int v1, v2, v3;
-            ss >> v1 >> v2 >> v3;
-            octree.face.push_back(v1 - 1);
-            octree.face.push_back(v2 - 1);
-            octree.face.push_back(v3 - 1);
-        }
+            vector<string> faceTokens;
+            string fToken;
+            
+            /
+            while (ss >> fToken) {
+                faceTokens.push_back(fToken);
+            }
 
-       
+            // Validasi: Cek apakah memiliki tepat 3 komponen (hanya menerima segitiga)
+            if (faceTokens.size() != 3) {
+                cerr << "Format Invalid di baris " << lineNumber 
+                     << ": Face harus berupa segitiga (3 komponen), tetapi ditemukan " 
+                     << faceTokens.size() << " komponen.\n";
+                return false;
+            }
+
+            try {
+                int v1 = stoi(faceTokens[0]);
+                int v2 = stoi(faceTokens[1]);
+                int v3 = stoi(faceTokens[2]);
+
+                octree.face.push_back(v1 - 1);
+                octree.face.push_back(v2 - 1);
+                octree.face.push_back(v3 - 1);
+            } catch (const exception& e) {
+                cerr << "Format Invalid di baris " << lineNumber << ": Komponen face bukan angka yang valid.\n";
+                return false;
+            }
+        }
     }
+
+    if (octree.vertex.empty() || octree.face.empty()) {
+        cerr << "Format Invalid: File .obj tidak memiliki komponen vertex atau face.\n";
+        return false;
+    }
+
+    return true;
 }
 
 int main(int argc, char* argv[]) {
@@ -65,10 +110,10 @@ int main(int argc, char* argv[]) {
     }
     file.close(); 
 
-    std::cout << "Input diterima dengan baik!\n";
-    std::cout << "File OBJ target : " << objFilePath << "\n";
-    std::cout << "Kedalaman Octree: " << maxDepth << "\n";
-    std::cout << "------------------------------------\n";
+    cout << "Input diterima dengan baik!\n";
+    cout << "File OBJ target : " << objFilePath << "\n";
+    cout << "Kedalaman Octree: " << maxDepth << "\n";
+    cout << "------------------------------------\n";
 
     Octree octree;
     octree.maxDepth = maxDepth;
@@ -78,10 +123,13 @@ int main(int argc, char* argv[]) {
     for(int i = 0; i <= maxDepth; i++) {
         octree.prunedNodes.push_back(0);
     }
-    //octree.nodeCountPerDepth[maxDepth] = 1; // Root node dihitung sebagai 1 pada kedalaman maksimum
+    //octree.nodeCountPerDepth[maxDepth] = 1; 
     
     // Parse object file
-    parseFile(objFilePath, octree);
+    if (!parseFile(objFilePath, octree)) {
+        cerr << "\nProses dibatalkan: Format file .obj tidak memenuhi spesifikasi.\n";
+        return 1; // Keluar jika parsing gagal
+    }
 
     auto start = chrono::high_resolution_clock::now();
 
